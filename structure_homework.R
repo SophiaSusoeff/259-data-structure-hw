@@ -8,9 +8,11 @@
 install.packages("rvest")
 
 #Load packages
+
 library(tidyverse)
 library(lubridate)
 library(rvest)
+library(stringr)
 
 # Scrape the data for the new rolling stone top 500 list
 url <- "https://stuarte.co/2021/2021-full-list-rolling-stones-top-500-songs-of-all-time-updated/"
@@ -19,7 +21,7 @@ rs_new <- url %>% read_html() %>% html_nodes(xpath='//*[@id="post-14376"]/div[2]
 # Scrape the data for the old rolling stone top 500 list
 url_old <- "https://www.cs.ubc.ca/~davet/music/list/Best9.html"
 rs_old <- url_old %>% read_html() %>% html_nodes(xpath='/html/body/table[2]') %>% html_table() %>% pluck(1) %>% 
-  select(1, 4, 3, 7) %>% rename(Rank = X1, Artist = X3, Song = X4, Year = X7) %>% filter(Year != "YEAR") 
+  select(1, 4, 3, 7) %>% rename(Rank = X1, Artist = X3, Song = X4, Year = X7) %>% filter(Year != "YEAR")
 
 # If there's a security error, add:
 #url %>% httr::GET(config = httr::config(ssl_verifypeer = FALSE)) %>% read_html()
@@ -38,7 +40,12 @@ load("rs_data.RData")
 # Why did some of the artist-song fail to match up?
 
 #ANSWER
+rs_joined_orig <- full_join(rs_new, rs_old, by = c("Artist", "Song"))
+View(rs_joined_orig)
 
+nrow(rs_joined_orig)
+
+#future: filter and arrange to "check" dataset and how they combined
 
 
 ### Question 2 ---------- 
@@ -51,6 +58,22 @@ load("rs_data.RData")
 
 #ANSWER
 
+#converting to integer
+
+rs_old$Rank <- as.numeric(rs_old$Rank)
+rs_old$Year <- as.numeric(rs_old$Year)
+
+#adding new columns
+
+rs_new$Source <- "New"
+rs_old$Source <- "Old"
+
+#joining the two datasets
+
+rs_all <- bind_rows(rs_new, rs_old)
+
+View(rs_all)
+
 
 ### Question 3 ----------
 
@@ -62,6 +85,34 @@ load("rs_data.RData")
 # Use both functions to make all artists/song lowercase and remove any extra spaces
 
 #ANSWER
+
+#removing "the" in artist & song
+
+rs_all$Artist <- str_remove_all(rs_all$Artist, "\\bThe\\b")
+
+rs_all$Song <- str_remove_all(rs_all$Song, "\\bThe\\b")
+
+#replacing & to "and" in artist and song
+
+rs_all$Artist <- str_replace_all(rs_all$Artist, "&", "and")
+
+rs_all$Song <- str_replace_all(rs_all$Song, "&", "and")
+
+#removing punctuation
+
+rs_all$Artist <- str_remove_all(rs_all$Artist, "[:punct:]")
+
+rs_all$Song <- str_remove_all(rs_all$Song, "[:punct:]")
+
+#changing to lowercase and removing spaces
+
+rs_all$Artist <- str_to_lower(rs_all$Artist)
+
+rs_all$Song <- str_to_lower(rs_all$Song)
+
+rs_all$Artist <- str_trim(rs_all$Artist)
+
+rs_all$Song <- str_trim(rs_all$Song)
 
 
 ### Question 4 ----------
@@ -76,6 +127,30 @@ load("rs_data.RData")
 
 #ANSWER
 
+#splitting up the dataset
+
+new_rs <- rs_all %>% slice(1:500)
+
+old_rs <- rs_all %>% slice(501:1000)
+
+View(new_rs)
+View(old_rs)
+
+#joining them back together
+rs_joined <- full_join(old_rs, new_rs, by = c("Artist", "Song"))
+View(rs_joined)
+
+#using suffix
+
+rs_joined <- full_join(old_rs, new_rs, by = c("Artist", "Song"), suffix = c("_Old", "_New"))
+View(rs_joined)
+#This also added _Old and _New to the variable: Source. Not sure why this happened, but I don't think it was supposed to.
+
+
+#checking number of rows
+
+nrow(rs_joined)
+
 
 ### Question 5 ----------
 
@@ -89,6 +164,24 @@ load("rs_data.RData")
 
 #ANSWER
 
+#removing Source variable
+rs_joined <- rs_joined %>% select(-Source_Old, -Source_New)
+View(rs_joined)
+
+#removing na values
+colSums(is.na(rs_joined))
+rs_joined <- rs_joined %>% filter(!is.na(Rank_New) & !is.na(Rank_Old))
+View(rs_joined)
+nrow(rs_joined)
+
+#adding new variable
+rs_joined <- rs_joined %>% mutate(Rank_Change = Rank_Old - Rank_New)
+View(rs_joined)
+
+#sorting by rank change 
+rs_joined <- rs_joined %>% arrange(Rank_Change)
+View(rs_joined)
+
 
 ### Question 6 ----------
 
@@ -100,6 +193,18 @@ load("rs_data.RData")
 
 #ANSWER
 
+#adding new variable
+rs_joined <- rs_joined %>% mutate(Old_Decade = factor(paste0(floor(Year_Old / 10) * 10, "s")))
+View(rs_joined)
+
+rs_joined <- rs_joined %>% mutate(New_Decade = factor(paste0(floor(Year_New / 10) * 10, "s")))
+View(rs_joined)
+#I made two new variables because there were two "year" columns (Year_Old and Year_New). I wasn't sure if I should only turn one of the columns into a decade?
+
+#grouping and summarizing
+rs_joined %>% group_by(New_Decade) %>% summarize(mean(Rank_Change, na.rm = T))
+
+#I believe the 1950's decade improved the most, as indicated by having the largest negative number (-118).
 
 
 ### Question 7 ----------
@@ -111,6 +216,14 @@ load("rs_data.RData")
 
 #ANSWER
 
+#number of songs
+fct_count(rs_joined$New_Decade)
+
+#limiting to three levels
+three_levels <- fct_lump(rs_joined$New_Decade, n = 3, other_level = "other")
+
+#seeing proportion of songs
+fct_count(three_levels, prop = TRUE)
 
 
 ### Question 8 ---------- 
@@ -121,6 +234,13 @@ load("rs_data.RData")
 
 #ANSWER
 
+top20 <- read_csv("top_20.csv")
+View(top20)
+head(top20)
+
+#fixing date
+top20$Release <- top20$Release %>% parse_date_time(orders = "dmy")
+View(top20)
 
 ### Question 9 --------
 
@@ -130,6 +250,9 @@ load("rs_data.RData")
 
 #ANSWER
 
+top20 <- top20 %>% pivot_wider(names_from = Style, values_from = Value)
+View(top20)
+nrow(top20)
 
 
 ### Question 10 ---------
@@ -144,6 +267,28 @@ load("rs_data.RData")
 
 #ANSWER
 
+#merging data
+top20 <- left_join(top20, rs_joined, by = c("Artist", "Song"))
+View(top20)
+#this gave me duplicates of every song. Not sure why. Fixed it with function below.
+
+#fixing duplicates 
+top20 <- top20 %>% distinct(Artist, Song, .keep_all = TRUE)
+
+#getting release month
+top20$Release_Month <- factor(month(top20$Release, label = TRUE, abbr = FALSE), levels = month.name)
+View(top20)
+
+#creating new factor for season
+top20$Season <- factor(case_when(top20$Release_Month %in% c("December", "January", "February") ~ "Winter", 
+                                 top20$Release_Month %in% c("March", "April", "May") ~ "Spring", 
+                                 top20$Release_Month %in% c("June", "July", "August") ~ "Summer",
+                                 top20$Release_Month %in% c("September", "October", "November") ~ "Fall"), levels = 
+                         c("Winter", "Spring", "Summer", "Fall"))
+View(top20)
+
+#counting number of songs in each season
+top20 %>% group_by(Season) %>% summarize(song_count = n())
 
 
 ### Question 11 ---------
@@ -155,5 +300,14 @@ load("rs_data.RData")
 
 #ANSWER
 
+#creating new factor
+top20 <- top20 %>% mutate(Quality = factor(ifelse(grepl("m", tolower(Key)), "Minor", "Major"), levels = 
+                                             c("Major", "Minor")))
+View(top20)
 
+#seeing how many are major vs minor
+table(top20$Quality)
+
+#finding the top-ranked song
+top20 %>% filter(Quality == "Minor") %>% arrange(Rank_New) %>% slice(1)
 
